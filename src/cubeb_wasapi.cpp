@@ -242,6 +242,15 @@ struct cubeb_stream {
   com_ptr<IAudioClient> input_client;
   /* Interface to use the event driven capture interface */
   com_ptr<IAudioCaptureClient> capture_client;
+  /* __uuidof(IAudioClient | IAudioClient3) */
+  GUID client_iid = GUID_NULL;
+  /* Is the client IAudioClient3? (versus IAudioClient) */
+  bool is_client3  = false;
+  /* These various frame rates (periodicities) available with IAudioClient3 */
+  UINT32 def_period; // default period in frames
+  UINT32 fun_period; // fundamental period in frames
+  UINT32 min_period; // minimum period in frames
+  UINT32 max_period; // maximum period in frames
   /* This event is set by the stream_stop and stream_destroy
      function, so the render loop can exit properly. */
   HANDLE shutdown_event = 0;
@@ -1522,9 +1531,8 @@ int setup_wasapi_stream_one_side(cubeb_stream * stm,
 
     /* Get a client. We will get all other interfaces we need from
      * this pointer. */
-    hr = device->Activate(__uuidof(IAudioClient),
-                          CLSCTX_INPROC_SERVER,
-                          NULL, audio_client.receive_vpp());
+    hr = device->Activate(stm->client_iid, CLSCTX_INPROC_SERVER, NULL,
+		                  audio_client.receive_vpp());
     if (FAILED(hr)) {
       LOG("Could not activate the device to get an audio"
           " client for %s: error: %lx\n", DIRECTION_NAME, hr);
@@ -1586,13 +1594,31 @@ int setup_wasapi_stream_one_side(cubeb_stream * stm,
       mix_params->format, mix_params->rate, mix_params->channels,
       CUBEB_CHANNEL_LAYOUT_MAPS[mix_params->layout].name);
 
-  hr = audio_client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                                AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
-                                AUDCLNT_STREAMFLAGS_NOPERSIST,
-                                frames_to_hns(stm, stm->latency),
-                                0,
-                                mix_format.get(),
-                                NULL);
+  if (stm->is_client3) { //!!should be a test for low-latency option or something like that!!
+	  IAudioClient3* iac3;
+	  hr = audio_client->QueryInterface(stm->client_iid, (void**) &iac3);
+	  if (FAILED(hr)) {
+		  return CUBEB_ERROR;
+	  }
+	  hr = iac3->GetSharedModeEnginePeriod(mix_format.get(),
+		   &stm->def_period, &stm->fun_period, &stm->min_period, &stm->max_period);
+	  if (FAILED(hr)) {
+		  return CUBEB_ERROR;
+	  }
+	  hr = iac3->InitializeSharedAudioStream(
+		   AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+		   stm->min_period,
+		   mix_format.get(),
+		   NULL);
+  } else {
+	  hr = audio_client->Initialize(
+		   AUDCLNT_SHAREMODE_SHARED,
+		   AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST,
+		   frames_to_hns(stm, stm->latency),
+		   0,
+		   mix_format.get(),
+		   NULL);
+  }
   if (FAILED(hr)) {
     LOG("Unable to initialize audio client for %s: %lx.", DIRECTION_NAME, hr);
     return CUBEB_ERROR;
@@ -1641,6 +1667,29 @@ int setup_wasapi_stream(cubeb_stream * stm)
   }
 
   XASSERT((!stm->output_client || !stm->input_client) && "WASAPI stream already setup, close it first.");
+
+  // Determine if IAudioClient3 is available and set the struct members
+  com_ptr<IAudioClient3> client;
+  com_ptr<IMMDevice>     device;
+  hr = get_default_endpoint(device, eRender);
+  if (FAILED(hr)) {
+	return CUBEB_ERROR;
+  }
+
+  stm->client_iid = __uuidof(IAudioClient3); // assume forwards compatibility
+  hr = device->Activate(stm->client_iid, CLSCTX_INPROC_SERVER, NULL,
+	                    client.receive_vpp());
+  if (SUCCEEDED(hr)) {
+	stm->is_client3 = true;
+  }
+  else if (hr == E_NOINTERFACE) { // fall back to IAudioClient
+	  stm->client_iid = __uuidof(IAudioClient);
+	  hr = device->Activate(stm->client_iid, CLSCTX_INPROC_SERVER, NULL,
+		                    client.receive_vpp());
+  }
+  if (FAILED(hr)) {
+	return CUBEB_ERROR;
+  }
 
   if (has_input(stm)) {
     LOG("(%p) Setup capture: device=%p", stm, stm->input_device.get());
