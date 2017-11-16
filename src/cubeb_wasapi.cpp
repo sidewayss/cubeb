@@ -246,7 +246,7 @@ struct cubeb_stream {
   GUID client_iid = GUID_NULL;
   /* Is the client IAudioClient3? (versus IAudioClient) */
   bool is_client3  = false;
-  /* These various frame rates (periodicities) available with IAudioClient3 */
+  /* The various frame rates (periodicities) available with IAudioClient3 */
   UINT32 def_period; // default period in frames
   UINT32 fun_period; // fundamental period in frames
   UINT32 min_period; // minimum period in frames
@@ -1669,25 +1669,21 @@ int setup_wasapi_stream(cubeb_stream * stm)
   XASSERT((!stm->output_client || !stm->input_client) && "WASAPI stream already setup, close it first.");
 
   // Determine if IAudioClient3 is available and set the struct members
-  com_ptr<IAudioClient3> client;
+  com_ptr<IAudioClient3> iac3;
   com_ptr<IMMDevice>     device;
   hr = get_default_endpoint(device, eRender);
   if (FAILED(hr)) {
 	return CUBEB_ERROR;
   }
-
   stm->client_iid = __uuidof(IAudioClient3); // assume forwards compatibility
-  hr = device->Activate(stm->client_iid, CLSCTX_INPROC_SERVER, NULL,
-	                    client.receive_vpp());
+  hr = device->Activate(stm->client_iid, CLSCTX_INPROC_SERVER, NULL, iac3.receive_vpp());
   if (SUCCEEDED(hr)) {
 	stm->is_client3 = true;
   }
-  else if (hr == E_NOINTERFACE) { // fall back to IAudioClient
-	  stm->client_iid = __uuidof(IAudioClient);
-	  hr = device->Activate(stm->client_iid, CLSCTX_INPROC_SERVER, NULL,
-		                    client.receive_vpp());
+  else if (hr == E_NOINTERFACE) {            // fall back to IAudioClient
+	stm->client_iid = __uuidof(IAudioClient);
   }
-  if (FAILED(hr)) {
+  else {
 	return CUBEB_ERROR;
   }
 
