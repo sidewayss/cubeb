@@ -175,10 +175,9 @@ static std::unique_ptr<wchar_t const []> utf8_to_wstr(char const * str);
 struct cubeb {
   cubeb_ops const * ops = &wasapi_ops;
   cubeb_strings * device_ids;
-  /* __uuidof(IAudioClient | IAudioClient3) */
-  GUID client_iid = GUID_NULL;
-  /* Is the client IAudioClient3? (versus IAudioClient) */
-  bool is_client3 = false;
+  GUID client_iid = GUID_NULL; // __uuidof(IAudioClient or IAudioClient3)
+  bool is_client3 = false; // Is the client IAudioClient3? (versus IAudioClient)
+  LONGLONG frequency; //!!DEBUG-ONLY system counter frequency, for timestamps
 };
 
 class wasapi_endpoint_notification_client;
@@ -251,6 +250,12 @@ struct cubeb_stream {
   uint32_t fun_period; // fundamental period in frames
   uint32_t min_period; // minimum period in frames
   uint32_t max_period; // maximum period in frames
+  /* Duplex streams wait until the input stream is running until starting output */
+  uint32_t out_frames = 0;
+  //!!debug only: for measuring callback periodicity!!
+  LARGE_INTEGER startTime; // time of stream activate, in fractional seconds
+  LARGE_INTEGER lastTime;  // time of last callback,   in fractional seconds
+  int counter = 0;
   /* This event is set by the stream_stop and stream_destroy
      function, so the render loop can exit properly. */
   HANDLE shutdown_event = 0;
@@ -559,7 +564,7 @@ long
 refill(cubeb_stream * stm, void * input_buffer, long input_frames_count,
        void * output_buffer, long output_frames_needed)
 {
-  /* If we need to upmix after resampling, resample into the mix buffer to
+	/* If we need to upmix after resampling, resample into the mix buffer to
      avoid a copy. */
   void * dest = nullptr;
   if (has_output(stm)) {
@@ -614,6 +619,11 @@ bool get_input_buffer(cubeb_stream * stm)
   HRESULT hr;
   UINT32 padding_in;
 
+  LARGE_INTEGER now;
+  QueryPerformanceCounter(&now);
+	ALOGV(" INP %.2fms",
+            1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
+
   XASSERT(has_input(stm));
 
   hr = stm->input_client->GetCurrentPadding(&padding_in);
@@ -632,8 +642,8 @@ bool get_input_buffer(cubeb_stream * stm)
    * contiguous buffer. */
   uint32_t offset = 0;
   while (offset != total_available_input) {
-    hr = stm->capture_client->GetNextPacketSize(&next);
-    if (FAILED(hr)) {
+	hr = stm->capture_client->GetNextPacketSize(&next);
+	if (FAILED(hr)) {
       LOG("cannot get next packet size: %lx", hr);
       return false;
     }
@@ -696,6 +706,11 @@ bool get_output_buffer(cubeb_stream * stm, void *& buffer, size_t & frame_count)
   UINT32 padding_out;
   HRESULT hr;
 
+  LARGE_INTEGER now;
+  QueryPerformanceCounter(&now);
+  ALOGV(" OUT %.2fms",
+    1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
+
   XASSERT(has_output(stm));
 
   hr = stm->output_client->GetCurrentPadding(&padding_out);
@@ -725,8 +740,51 @@ bool get_output_buffer(cubeb_stream * stm, void *& buffer, size_t & frame_count)
   }
 
   buffer = output_buffer;
-
   return true;
+}
+
+enum StreamDirection {
+  OUTPUT,
+  INPUT
+};
+
+int stream_start_one_side(cubeb_stream * stm, StreamDirection dir)
+{
+  XASSERT((dir == OUTPUT && stm->output_client) ||
+    (dir == INPUT && stm->input_client));
+
+  HRESULT hr = dir == OUTPUT ? stm->output_client->Start() : stm->input_client->Start();
+  if (hr == AUDCLNT_E_DEVICE_INVALIDATED) {
+    LOG("audioclient invalidated for %s device, reconfiguring",
+      dir == OUTPUT ? "output" : "input");
+
+    BOOL ok = ResetEvent(stm->reconfigure_event);
+    if (!ok) {
+      LOG("resetting reconfig event failed for %s stream: %lx",
+        dir == OUTPUT ? "output" : "input", GetLastError());
+    }
+
+    close_wasapi_stream(stm);
+    int r = setup_wasapi_stream(stm);
+    if (r != CUBEB_OK) {
+      LOG("reconfigure failed");
+      return r;
+    }
+
+    HRESULT hr2 = dir == OUTPUT ? stm->output_client->Start() : stm->input_client->Start();
+    if (FAILED(hr2)) {
+      LOG("could not start the %s stream after reconfig: %lx",
+        dir == OUTPUT ? "output" : "input", hr);
+      return CUBEB_ERROR;
+    }
+  }
+  else if (FAILED(hr)) {
+    LOG("could not start the %s stream: %lx.",
+      dir == OUTPUT ? "output" : "input", hr);
+    return CUBEB_ERROR;
+  }
+
+  return CUBEB_OK;
 }
 
 /**
@@ -741,7 +799,27 @@ refill_callback_duplex(cubeb_stream * stm)
   size_t input_frames;
   bool rv;
 
+  LARGE_INTEGER now;
+  QueryPerformanceCounter(&now);
+  ALOGV("\r\nrcd:%05.2fms", 1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
+  stm->lastTime = now;
+
   XASSERT(has_input(stm) && has_output(stm));
+
+  if (stm->out_frames < 9) {
+    stm->out_frames++;
+    return true;
+  }
+//  else if (stm->out_frames == 9) {
+//    // Start the output stream
+//    int rv = stream_start_one_side(stm, OUTPUT);
+//    if (rv != CUBEB_OK) {
+//        return rv;
+//    }
+//    stm->out_frames++;
+//    ALOGV(" yesO");
+//    return true;
+//  }
 
   rv = get_input_buffer(stm);
   if (!rv) {
@@ -750,6 +828,7 @@ refill_callback_duplex(cubeb_stream * stm)
 
   input_frames = stm->linear_input_buffer->length() / stm->input_stream_params.channels;
   if (!input_frames) {
+    ALOGV(" noI");
     return true;
   }
 
@@ -765,9 +844,8 @@ refill_callback_duplex(cubeb_stream * stm)
     return true;
   }
 
-
-  ALOGV("Duplex callback: input frames: %Iu, output frames: %Iu",
-        input_frames, output_frames);
+  QueryPerformanceCounter(&now);
+  ALOGV(" cb2:%.2fms", 1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
 
   refill(stm,
          stm->linear_input_buffer->data(),
@@ -782,9 +860,17 @@ refill_callback_duplex(cubeb_stream * stm)
     LOG("failed to release buffer: %lx", hr);
     return false;
   }
+
+  QueryPerformanceCounter(&now);
+  if (input_frames > 0)
+    ALOGV(" %.2fms in:%d",
+  			1000.0 * (now.QuadPart - stm->startTime.QuadPart) / stm->context->frequency,
+  			input_frames);
+  if (output_frames > 0)
+    ALOGV(" out:%d", output_frames);
+
   return true;
 }
-
 bool
 refill_callback_input(cubeb_stream * stm)
 {
@@ -826,6 +912,12 @@ refill_callback_output(cubeb_stream * stm)
   void * output_buffer = nullptr;
   size_t output_frames = 0;
 
+
+  LARGE_INTEGER now;
+  QueryPerformanceCounter(&now);
+  ALOGV("cb1:%05.2fms ", 1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
+  stm->lastTime = now;
+
   XASSERT(!has_input(stm) && has_output(stm));
 
   rv = get_output_buffer(stm, output_buffer, output_frames);
@@ -854,6 +946,13 @@ refill_callback_output(cubeb_stream * stm)
     LOG("failed to release buffer: %lx", hr);
     return false;
   }
+
+  QueryPerformanceCounter(&now);
+  if (output_frames > 0)
+	ALOGV("%.2fms %.2fms out:%d\n",
+	        1000.0 * (now.QuadPart - stm->lastTime.QuadPart)  / stm->context->frequency,
+		    1000.0 * (now.QuadPart - stm->startTime.QuadPart) / stm->context->frequency,
+		    output_frames);
 
   return (unsigned long) got == output_frames || stm->draining;
 }
@@ -975,8 +1074,10 @@ wasapi_stream_render_loop(LPVOID stream)
       is_playing = stm->refill_callback(stm);
       break;
     case WAIT_OBJECT_0 + 3: /* input available */
-      if (has_input(stm) && has_output(stm)) { continue; }
-      is_playing = stm->refill_callback(stm);
+      if (has_input(stm) && has_output(stm)) {
+        continue;
+      }
+        is_playing = stm->refill_callback(stm);
       break;
     case WAIT_TIMEOUT:
       XASSERT(stm->shutdown_event == wait_array[0]);
@@ -1157,6 +1258,41 @@ stream_set_volume(cubeb_stream * stm, float volume)
 
   return CUBEB_OK;
 }
+
+static HANDLE hLogFile = NULL;
+
+void wasapi_alogv_callback(const char* fmt, ...) {
+  va_list arglist;
+  char buffer[256];
+  DWORD dwBytesToWrite;
+  DWORD dwBytesWritten = 0;
+  BOOL bErrorFlag = FALSE;
+
+  // Format into a string.
+  va_start(arglist, fmt);
+  vsnprintf(buffer, 256, fmt, arglist);
+  va_end(arglist);
+
+  dwBytesToWrite = (DWORD)strlen(buffer);
+
+  bErrorFlag = WriteFile(hLogFile, buffer, dwBytesToWrite, &dwBytesWritten, NULL);
+  if (FALSE == bErrorFlag)
+  {
+    printf("Error: WriteFile() failed\n");
+    return;
+  }
+  else
+  {
+    if (dwBytesWritten != dwBytesToWrite)
+    {
+      // This is an error because a synchronous write that results in
+      // success (WriteFile returns TRUE) should write all data as
+      // requested. This would not necessarily be the case for
+      // asynchronous writes.
+      printf("Warning: dwBytesWritten != dwBytesToWrite\n");
+    }
+  }
+}
 } // namespace anonymous
 
 extern "C" {
@@ -1166,6 +1302,25 @@ int wasapi_init(cubeb ** context, char const * context_name)
   auto_com com;
   if (!com.ok()) {
     return CUBEB_ERROR;
+  }
+
+  //!!Enable verbose async logging
+  DWORD dwDisposition;
+  HANDLE hFind;
+  WIN32_FIND_DATA FindFileData;
+  hFind = FindFirstFile("w_latency_log.txt", &FindFileData);
+  if (hFind == INVALID_HANDLE_VALUE)
+    dwDisposition = CREATE_NEW;
+  else
+    dwDisposition = OPEN_EXISTING;
+  FindClose(hFind);
+
+  hLogFile = CreateFile("w_latency_log.txt", GENERIC_WRITE, 0, NULL, dwDisposition, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (hLogFile == INVALID_HANDLE_VALUE) {
+    printf("Error: CreateFile() failed\n");
+  }
+  else if (cubeb_set_log_callback(CUBEB_LOG_VERBOSE, wasapi_alogv_callback) != CUBEB_OK) {
+    fprintf(stderr, "Set log callback failed\n");
   }
 
   /* We don't use the device yet, but need to make sure we can initialize one
@@ -1202,6 +1357,11 @@ int wasapi_init(cubeb ** context, char const * context_name)
 
   *context = ctx;
 
+  //!!DEBUG ONLY
+  LARGE_INTEGER frequency;
+  QueryPerformanceFrequency(&frequency);
+  ctx->frequency = frequency.QuadPart;
+
   return CUBEB_OK;
 }
 }
@@ -1212,7 +1372,7 @@ bool stop_and_join_render_thread(cubeb_stream * stm)
   bool rv = true;
   LOG("Stop and join render thread.");
   if (!stm->thread) {
-    LOG("No thread present.");
+    LOG("No thread present!");
     return true;
   }
 
@@ -1253,7 +1413,7 @@ bool stop_and_join_render_thread(cubeb_stream * stm)
   // WaitForSingleObject above succeeded, so that calling this function again
   // attemps to clean up the thread and event each time.
   if (rv) {
-    LOG("Closing thread.");
+    LOG("Closing thread.\n");
     CloseHandle(stm->thread);
     stm->thread = NULL;
 
@@ -1271,6 +1431,9 @@ void wasapi_destroy(cubeb * context)
   }
 
   delete context;
+
+  if (hLogFile)
+    CloseHandle(hLogFile);
 }
 
 char const * wasapi_get_backend_id(cubeb * context)
@@ -1721,13 +1884,13 @@ int setup_wasapi_stream(cubeb_stream * stm)
     // refill event will be set shortly after to compensate for this lack of data.
     // In debug, four buffers are used, to avoid tripping up assertions down the line.
 #if !defined(DEBUG)
-    const int silent_buffer_count = 2;
+    const int silent_buffer_count = 1;
 #else
-    const int silent_buffer_count = 4;
+    const int silent_buffer_count = 1;
 #endif
     stm->linear_input_buffer->push_silence(stm->input_buffer_frame_count *
-                                          stm->input_stream_params.channels *
-                                          silent_buffer_count);
+      stm->input_stream_params.channels *
+      silent_buffer_count);
 
     if (rv != CUBEB_OK) {
       LOG("Failure to open the input side.");
@@ -1825,14 +1988,17 @@ int setup_wasapi_stream(cubeb_stream * stm)
 }
 
 int
-wasapi_stream_init(cubeb * context, cubeb_stream ** stream,
+wasapi_stream_init(cubeb * context,
+	               cubeb_stream ** stream,
                    char const * stream_name,
                    cubeb_devid input_device,
                    cubeb_stream_params * input_stream_params,
                    cubeb_devid output_device,
                    cubeb_stream_params * output_stream_params,
-                   unsigned int latency_frames, cubeb_data_callback data_callback,
-                   cubeb_state_callback state_callback, void * user_ptr)
+                   unsigned int latency_frames,
+	               cubeb_data_callback data_callback,
+                   cubeb_state_callback state_callback,
+	               void * user_ptr)
 {
   HRESULT hr;
   int rv;
@@ -1985,49 +2151,6 @@ void wasapi_stream_destroy(cubeb_stream * stm)
   delete stm;
 }
 
-enum StreamDirection {
-  OUTPUT,
-  INPUT
-};
-
-int stream_start_one_side(cubeb_stream * stm, StreamDirection dir)
-{
-  XASSERT((dir == OUTPUT && stm->output_client) ||
-          (dir == INPUT && stm->input_client));
-
-  HRESULT hr = dir == OUTPUT ? stm->output_client->Start() : stm->input_client->Start();
-  if (hr == AUDCLNT_E_DEVICE_INVALIDATED) {
-    LOG("audioclient invalidated for %s device, reconfiguring",
-        dir == OUTPUT ? "output" : "input");
-
-    BOOL ok = ResetEvent(stm->reconfigure_event);
-    if (!ok) {
-      LOG("resetting reconfig event failed for %s stream: %lx",
-          dir == OUTPUT ? "output" : "input", GetLastError());
-    }
-
-    close_wasapi_stream(stm);
-    int r = setup_wasapi_stream(stm);
-    if (r != CUBEB_OK) {
-      LOG("reconfigure failed");
-      return r;
-    }
-
-    HRESULT hr2 = dir == OUTPUT ? stm->output_client->Start() : stm->input_client->Start();
-    if (FAILED(hr2)) {
-      LOG("could not start the %s stream after reconfig: %lx",
-          dir == OUTPUT ? "output" : "input", hr);
-      return CUBEB_ERROR;
-    }
-  } else if (FAILED(hr)) {
-    LOG("could not start the %s stream: %lx.",
-        dir == OUTPUT ? "output" : "input", hr);
-    return CUBEB_ERROR;
-  }
-
-  return CUBEB_OK;
-}
-
 int wasapi_stream_start(cubeb_stream * stm)
 {
   auto_lock lock(stm->stream_reset_lock);
@@ -2037,15 +2160,17 @@ int wasapi_stream_start(cubeb_stream * stm)
 
   stm->emergency_bailout = new std::atomic<bool>(false);
 
-  if (stm->output_client) {
-    int rv = stream_start_one_side(stm, OUTPUT);
+  QueryPerformanceCounter(&stm->startTime);
+  stm->lastTime = stm->startTime;
+
+  if (stm->input_client) {
+    int rv = stream_start_one_side(stm, INPUT);
     if (rv != CUBEB_OK) {
       return rv;
     }
   }
-
-  if (stm->input_client) {
-    int rv = stream_start_one_side(stm, INPUT);
+  if (stm->output_client) { // duplex handled in refill_callback_duplex()
+    int rv = stream_start_one_side(stm, OUTPUT);
     if (rv != CUBEB_OK) {
       return rv;
     }
