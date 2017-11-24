@@ -16,6 +16,7 @@
 #include <math.h>
 #include <memory>
 #include "cubeb/cubeb.h"
+#include "cubeb_log.h"
 #include "common.h"
 #include <atomic>
 
@@ -64,13 +65,12 @@ long data_cb_duplex(cubeb_stream * stream, void * user, const void * inputbuffer
       break;
     }
 
-    if (intpart > 0) {
+    if (intpart >= 0) {
       if (abs(ib[i]) > max)
         max = abs(ib[i]);
       if (max > 0.1 && !u->is_max) {
         QueryPerformanceCounter(&now);
-        printf("in:%.2fms elapsed:%.2fms\n", 1000.0 * (now.QuadPart - u->start_time) / u->frequency,
-                                                                  1000.0 * (now.QuadPart - u->tone_start) / u->frequency);
+        ALOGV("elapsed:%.2fms\r\n", 1000.0 * (now.QuadPart - u->tone_start) / u->frequency);
         u->is_max = true;
       }
       if (remainder > 0.150 && remainder < 0.160) {
@@ -78,7 +78,7 @@ long data_cb_duplex(cubeb_stream * stream, void * user, const void * inputbuffer
           u->is_tone = true;
           u->is_max  = false;
           u->tone_start = current_time;
-          printf("start:%.2fms ", 1000.0 * (current_time - u->start_time) / u->frequency);
+//          ALOGV("start:%8.2fms ", 1000.0 * (current_time - u->start_time) / u->frequency);
         }
         t1 = sin(2 * M_PI*(i + u->position) * 350 / SAMPLE_FREQUENCY);
         t2 = sin(2 * M_PI*(i + u->position) * 440 / SAMPLE_FREQUENCY);
@@ -88,7 +88,7 @@ long data_cb_duplex(cubeb_stream * stream, void * user, const void * inputbuffer
       else {
         if (u->is_tone) {
           u->is_tone = false;
-          printf("end:%.2fms ", 1000.0 * (current_time - u->start_time) / u->frequency);
+//          ALOGV("end:%8.2fms ", 1000.0 * (current_time - u->start_time) / u->frequency);
         }
         ob[output_index] = ob[output_index + 1] = 0; // ib[i];
         output_index += 2;
@@ -164,8 +164,7 @@ TEST(cubeb, duplex)
 
   std::unique_ptr<cubeb_stream, decltype(&cubeb_stream_destroy)>
     cleanup_stream_at_exit(stream, cubeb_stream_destroy);
-
-  
+    
   LARGE_INTEGER now;
   QueryPerformanceFrequency(&now);
   stream_state.frequency = now.QuadPart;
@@ -173,7 +172,7 @@ TEST(cubeb, duplex)
   stream_state.start_time = now.QuadPart;
 
   cubeb_stream_start(stream);
-  delay(6600);
+  delay(60600);
   cubeb_stream_stop(stream);
 
   ASSERT_TRUE(stream_state.seen_audio.load());

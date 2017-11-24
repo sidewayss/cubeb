@@ -619,10 +619,10 @@ bool get_input_buffer(cubeb_stream * stm)
   HRESULT hr;
   UINT32 padding_in;
 
-  LARGE_INTEGER now;
-  QueryPerformanceCounter(&now);
-	ALOGV(" INP %.2fms",
-            1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
+//  LARGE_INTEGER now;
+//  QueryPerformanceCounter(&now);
+//	ALOGV(" INP %.2fms",
+//            1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
 
   XASSERT(has_input(stm));
 
@@ -706,10 +706,10 @@ bool get_output_buffer(cubeb_stream * stm, void *& buffer, size_t & frame_count)
   UINT32 padding_out;
   HRESULT hr;
 
-  LARGE_INTEGER now;
-  QueryPerformanceCounter(&now);
-  ALOGV(" OUT %.2fms",
-    1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
+//  LARGE_INTEGER now;
+//  QueryPerformanceCounter(&now);
+//  ALOGV(" OUT %.2fms",
+//    1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
 
   XASSERT(has_output(stm));
 
@@ -799,10 +799,10 @@ refill_callback_duplex(cubeb_stream * stm)
   size_t input_frames;
   bool rv;
 
-  LARGE_INTEGER now;
-  QueryPerformanceCounter(&now);
-  ALOGV("\r\nrcd:%05.2fms", 1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
-  stm->lastTime = now;
+//  LARGE_INTEGER now;
+//  QueryPerformanceCounter(&now);
+//  ALOGV("\r\nrcd:%05.2fms", 1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
+//  stm->lastTime = now;
 
   XASSERT(has_input(stm) && has_output(stm));
 
@@ -828,7 +828,7 @@ refill_callback_duplex(cubeb_stream * stm)
 
   input_frames = stm->linear_input_buffer->length() / stm->input_stream_params.channels;
   if (!input_frames) {
-    ALOGV(" noI");
+//    ALOGV(" noI");
     return true;
   }
 
@@ -844,8 +844,8 @@ refill_callback_duplex(cubeb_stream * stm)
     return true;
   }
 
-  QueryPerformanceCounter(&now);
-  ALOGV(" cb2:%.2fms", 1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
+//  QueryPerformanceCounter(&now);
+//  ALOGV(" cb2:%.2fms", 1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
 
   refill(stm,
          stm->linear_input_buffer->data(),
@@ -861,13 +861,13 @@ refill_callback_duplex(cubeb_stream * stm)
     return false;
   }
 
-  QueryPerformanceCounter(&now);
-  if (input_frames > 0)
-    ALOGV(" %.2fms in:%d",
-  			1000.0 * (now.QuadPart - stm->startTime.QuadPart) / stm->context->frequency,
-  			input_frames);
-  if (output_frames > 0)
-    ALOGV(" out:%d", output_frames);
+//  QueryPerformanceCounter(&now);
+//  if (input_frames > 0)
+//    ALOGV(" %.2fms in:%d",
+//  			1000.0 * (now.QuadPart - stm->startTime.QuadPart) / stm->context->frequency,
+//  			input_frames);
+//  if (output_frames > 0)
+//    ALOGV(" out:%d", output_frames);
 
   return true;
 }
@@ -913,10 +913,10 @@ refill_callback_output(cubeb_stream * stm)
   size_t output_frames = 0;
 
 
-  LARGE_INTEGER now;
-  QueryPerformanceCounter(&now);
-  ALOGV("cb1:%05.2fms ", 1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
-  stm->lastTime = now;
+//  LARGE_INTEGER now;
+//  QueryPerformanceCounter(&now);
+//  ALOGV("cb1:%05.2fms ", 1000.0 * (now.QuadPart - stm->lastTime.QuadPart) / stm->context->frequency);
+//  stm->lastTime = now;
 
   XASSERT(!has_input(stm) && has_output(stm));
 
@@ -947,12 +947,12 @@ refill_callback_output(cubeb_stream * stm)
     return false;
   }
 
-  QueryPerformanceCounter(&now);
-  if (output_frames > 0)
-	ALOGV("%.2fms %.2fms out:%d\n",
-	        1000.0 * (now.QuadPart - stm->lastTime.QuadPart)  / stm->context->frequency,
-		    1000.0 * (now.QuadPart - stm->startTime.QuadPart) / stm->context->frequency,
-		    output_frames);
+//  QueryPerformanceCounter(&now);
+//  if (output_frames > 0)
+//	ALOGV("%.2fms %.2fms out:%d\n",
+//	        1000.0 * (now.QuadPart - stm->lastTime.QuadPart)  / stm->context->frequency,
+//		    1000.0 * (now.QuadPart - stm->startTime.QuadPart) / stm->context->frequency,
+//		    output_frames);
 
   return (unsigned long) got == output_frames || stm->draining;
 }
