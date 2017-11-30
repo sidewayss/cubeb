@@ -149,14 +149,12 @@ TEST(cubeb, duplex)
   /* minimal latency user-case: input and output params identical. */
   inp_params.format     = STREAM_FORMAT;
   out_params.format     = STREAM_FORMAT;
-  inp_params.layout     = CUBEB_LAYOUT_MONO;
-  out_params.layout     = CUBEB_LAYOUT_MONO;
-  inp_params.channels   = 1;
-  out_params.channels   = 1;
+  inp_params.layout     = CUBEB_LAYOUT_STEREO;
+  out_params.layout     = CUBEB_LAYOUT_STEREO;
+  inp_params.channels   = 2;
+  out_params.channels   = 2;
   inp_params.rate       = 48000;
   out_params.rate       = 48000;
-  inp_params.valid_bits = 24;
-  out_params.valid_bits = 24;
 
   dev_type = (cubeb_device_type)(CUBEB_DEVICE_TYPE_INPUT | CUBEB_DEVICE_TYPE_OUTPUT);
   r = cubeb_get_min_latency(ctx, dev_type, NULL, NULL, &inp_params, &out_params);

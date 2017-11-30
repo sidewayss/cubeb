@@ -241,7 +241,7 @@ struct cubeb_stream {
      audio device changes and route the audio to the new default audio output
      device */
   com_ptr<wasapi_endpoint_notification_client> notification_client;
-  /* Main andle to the WASAPI capture stream. */
+  /* Main handle to the WASAPI capture stream. */
   com_ptr<IAudioClient> input_client;
   /* Interface to use the event driven capture interface */
   com_ptr<IAudioCaptureClient> capture_client;
@@ -805,16 +805,6 @@ refill_callback_duplex(cubeb_stream * stm)
     stm->wait_frames++;
     return true;
   }
-//  else if (stm->wait_frames == 9) {
-//    // Start the output stream
-//    int rv = stream_start_one_side(stm, OUTPUT);
-//    if (rv != CUBEB_OK) {
-//        return rv;
-//    }
-//    stm->wait_frames++;
-//    ALOGV(" yesO");
-//    return true;
-//  }
 
   rv = get_input_buffer(stm);
   if (!rv) {
@@ -906,7 +896,6 @@ refill_callback_output(cubeb_stream * stm)
   HRESULT hr;
   void * output_buffer = nullptr;
   size_t output_frames = 0;
-
 
 //  LARGE_INTEGER now;
 //  QueryPerformanceCounter(&now);
@@ -1174,11 +1163,11 @@ waveformatex_update_derived_properties(WAVEFORMATEX * format)
   format->nAvgBytesPerSec = format->nSamplesPerSec * format->nBlockAlign;
 }
 
-HRESULT get_endpoint(com_ptr<IMMDevice> &    device,
-                     LPCWSTR                 devid,
-                     EDataFlow               direction,
-                     com_ptr<IAudioClient> & audio_client,
-                     cubeb_stream_params *   params,
+HRESULT get_endpoint(com_ptr<IMMDevice> &         device,
+                     LPCWSTR                      devid,
+                     EDataFlow                    direction,
+                     com_ptr<IAudioClient> &      audio_client,
+                     cubeb_stream_params *        params,
                      com_heap_ptr<WAVEFORMATEX> & mix_format)
 {
   HRESULT hr;
@@ -1246,34 +1235,35 @@ HRESULT get_endpoint(com_ptr<IMMDevice> &    device,
 
   // Process the WAVEFORMATEX
   // Start with the current format as baseline
-  WAVEFORMATEX * tmp = nullptr;
-  hr = audio_client->GetMixFormat(&tmp);
+  WAVEFORMATEX * format = nullptr;
+  hr = audio_client->GetMixFormat(&format);
   if (FAILED(hr)) {
     LOG("Could not fetch current mix format from the audio "
         "client for %s: error: %lx", DIRECTION_NAME, hr);
     return CUBEB_ERROR;
   }
-  mix_format.reset(tmp);
+  mix_format.reset(format);
 
-  // Deal with extended struct members
+  // Deal with extended struct members first
   WAVEFORMATEXTENSIBLE * format_pcm = nullptr;
   bool is_dirty = false;
   if (mix_format->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
-    GUID sub_format = (params->format == CUBEB_SAMPLE_S16NE
-                       ? KSDATAFORMAT_SUBTYPE_PCM
-                       : KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+    DWORD channel_mask = channel_layout_to_mask(params->layout);
+    GUID  sub_format   = (params->format == CUBEB_SAMPLE_S16NE
+                          ? KSDATAFORMAT_SUBTYPE_PCM
+                          : KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+
     format_pcm = reinterpret_cast<WAVEFORMATEXTENSIBLE *>(mix_format.get());
-    if (format_pcm->SubFormat != sub_format
-     || format_pcm->Samples.wValidBitsPerSample != params->valid_bits
-     || format_pcm->dwChannelMask != channel_layout_to_mask(params->layout))
+    if (format_pcm->SubFormat     != sub_format
+     || format_pcm->dwChannelMask != channel_mask)
     {
       is_dirty = true;
-      format_pcm->dwChannelMask = channel_layout_to_mask(params->layout);
-      format_pcm->Samples.wValidBitsPerSample = params->valid_bits;
-      format_pcm->SubFormat = sub_format;
+      format_pcm->SubFormat     = sub_format;
+      format_pcm->dwChannelMask = channel_mask;
     }
   }
 
+  // The rest of the members, including the derived ones
   if (mix_format->nSamplesPerSec != params->rate
    || mix_format->nChannels      != params->channels
    || mix_format->wBitsPerSample != bits)
@@ -1291,49 +1281,33 @@ HRESULT get_endpoint(com_ptr<IMMDevice> &    device,
                                          mix_format.get(), &closest);
     if (hr == S_FALSE) {
       /* One or more values not supported, but WASAPI gives us a suggestion.
-          Use it, and handle the eventual upmix/downmix ourselves. Ignore the
-          Subformat of the suggestion, since it is always IEEE_FLOAT and because:
+         Use it, and handle the eventual upmix/downmix ourselves. Ignore the
+         Subformat of the suggestion, because it is always IEEE_FLOAT and:
         "The audio engine represents sample values internally as floating-point
-          numbers, but if the caller-specified format represents sample values as
-          integers, the audio engine typically can convert between the integer
-          sample values and its internal floating-point representation." [2]
-          [2]: https://msdn.microsoft.com/en-us/library/windows/desktop/dd370876(v=vs.85).aspx
+         numbers, but if the caller-specified format represents sample values
+         as integers, the audio engine typically can convert between the integer
+         sample values and its internal floating-point representation." [2]
+        [2]: https://msdn.microsoft.com/en-us/library/windows/desktop/dd370876(v=vs.85).aspx
       */
-      if (mix_format->nChannels != closest->nChannels) {
-        LOG("Using WASAPI suggested format: channels: %d", closest->nChannels);
-        params->channels = closest->nChannels;
-      }
-      if (mix_format->nSamplesPerSec != closest->nSamplesPerSec) {
-        LOG("Using WASAPI suggested format: sample rate: %d", closest->nSamplesPerSec);
-        params->rate = closest->nSamplesPerSec;
-      }
-      if (mix_format->wBitsPerSample != closest->wBitsPerSample) {
-        LOG("Using WASAPI suggested format: wBitsPerSample: %d", closest->wBitsPerSample);
-        ////!!!!should I derive a params->format? That also affects int vs. float.
-      }
+      GUID sub_format;
       if (format_pcm) {
-        WAVEFORMATEXTENSIBLE * closest_pcm = reinterpret_cast<WAVEFORMATEXTENSIBLE *>(closest);
-        if (format_pcm->dwChannelMask != closest_pcm->dwChannelMask) {
-          LOG("Using WASAPI suggested format: channel mask: %d", closest_pcm->dwChannelMask);
-          params->layout = mask_to_channel_layout(closest);
-        }
-        if (format_pcm->Samples.wValidBitsPerSample != closest_pcm->Samples.wValidBitsPerSample) {
-          LOG("Using WASAPI suggested format: valid bits: %d", closest_pcm->Samples.wValidBitsPerSample);
-          params->valid_bits = closest_pcm->Samples.wValidBitsPerSample;
-        }
+        sub_format = format_pcm->SubFormat;
       }
       mix_format.reset(closest);
+      if (format_pcm) {
+        format_pcm->SubFormat = sub_format;
+      }
     }
     else if (hr == AUDCLNT_E_UNSUPPORTED_FORMAT) {
       /* Not supported, no suggestion. This can happen [2], and it does in
          the field with some sound cards. We restore the mix format, and let
          the rest of the code figure out the right conversion path. */
       mix_format.release();
-      hr = audio_client->GetMixFormat(&tmp);
+      hr = audio_client->GetMixFormat(&format);
       if (FAILED(hr)) {
         return CUBEB_ERROR;
       }
-      mix_format.reset(tmp);
+      mix_format.reset(format);
     }
     else if (hr == S_OK) {
       LOG("Requested format accepted by WASAPI.");
@@ -2107,7 +2081,7 @@ int setup_wasapi_stream(cubeb_stream * stm)
 
   stm->resampler.reset(
     cubeb_resampler_create(stm,
-                           has_input(stm) ? &input_params : nullptr,
+                           has_input(stm)  ? &input_params  : nullptr,
                            has_output(stm) ? &output_params : nullptr,
                            target_sample_rate,
                            stm->data_callback,
@@ -2140,9 +2114,9 @@ wasapi_stream_init(cubeb * context,
                    cubeb_devid output_device,
                    cubeb_stream_params * output_stream_params,
                    unsigned int latency_frames,
-	               cubeb_data_callback data_callback,
+	                 cubeb_data_callback data_callback,
                    cubeb_state_callback state_callback,
-	               void * user_ptr)
+	                 void * user_ptr)
 {
   HRESULT hr;
   int rv;

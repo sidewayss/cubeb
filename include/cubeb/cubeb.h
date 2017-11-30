@@ -220,8 +220,7 @@ typedef struct {
   uint32_t rate;                /**< Requested sample rate.  Valid range is [1000, 192000]. */
   uint32_t channels;            /**< Requested channel count.  Valid range is [1, 8]. */
   cubeb_channel_layout layout;  /**< Requested channel layout. This must be consistent with the provided channels. */
-  uint32_t frames;              /**< Requested frames per period. */
-  uint32_t valid_bits;          /**< Requested valid bits per sample. */
+  uint32_t frames;              /**< Requested frames per period for low latency. */
 } cubeb_stream_params;
 
 /** Audio device description */
