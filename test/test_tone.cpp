@@ -126,11 +126,13 @@ TEST(cubeb, duplex)
 {
   cubeb *ctx;
   cubeb_stream *stream;
-  cubeb_stream_params input_params;
-  cubeb_stream_params output_params;
-  int r;
+  cubeb_device_type dev_type;
+  cubeb_stream_params inp_params;
+  cubeb_stream_params out_params;
+  uint32_t inp_frames = 0;
+  uint32_t out_frames = 0;
   user_state_duplex stream_state;
-  uint32_t latency_frames = 0;
+  int r;
 
   r = common_init(&ctx, "Cubeb duplex example");
   ASSERT_EQ(r, CUBEB_OK) << "Error initializing cubeb library";
@@ -139,27 +141,30 @@ TEST(cubeb, duplex)
     cleanup_cubeb_at_exit(ctx, cubeb_destroy);
 
   /* This test needs an available input device, skip it if this host does not
-  * have one. */
+   * have one. */
   if (!has_available_input_device(ctx)) {
     return;
   }
 
-  /* typical user-case: mono input, stereo output, low latency. */
-  input_params.format = STREAM_FORMAT;
-  input_params.rate = 48000;
-  input_params.channels = 1;
-  input_params.layout = CUBEB_LAYOUT_MONO;
-  output_params.format = STREAM_FORMAT;
-  output_params.rate = 48000;
-  output_params.channels = 2;
-  output_params.layout = CUBEB_LAYOUT_STEREO;
+  /* minimal latency user-case: input and output params identical. */
+  inp_params.format     = STREAM_FORMAT;
+  out_params.format     = STREAM_FORMAT;
+  inp_params.layout     = CUBEB_LAYOUT_MONO;
+  out_params.layout     = CUBEB_LAYOUT_MONO;
+  inp_params.channels   = 1;
+  out_params.channels   = 1;
+  inp_params.rate       = 48000;
+  out_params.rate       = 48000;
+  inp_params.valid_bits = 24;
+  out_params.valid_bits = 24;
 
-  r = cubeb_get_min_latency(ctx, &output_params, &latency_frames);
-  ASSERT_EQ(r, CUBEB_OK) << "Could not get minimal latency";
+  dev_type = (cubeb_device_type)(CUBEB_DEVICE_TYPE_INPUT | CUBEB_DEVICE_TYPE_OUTPUT);
+  r = cubeb_get_min_latency(ctx, dev_type, NULL, NULL, &inp_params, &out_params);
+  ASSERT_EQ(r, CUBEB_OK) << "Could not get minimum latency";
 
   r = cubeb_stream_init(ctx, &stream, "Cubeb duplex",
-    NULL, &input_params, NULL, &output_params,
-    latency_frames, data_cb_duplex, state_cb_duplex, &stream_state);
+                        NULL, &inp_params, NULL, &out_params, 1, // 1 because latency cannot be <1 in cubeb.c
+                        data_cb_duplex, state_cb_duplex, &stream_state);
   ASSERT_EQ(r, CUBEB_OK) << "Error initializing cubeb stream";
 
   std::unique_ptr<cubeb_stream, decltype(&cubeb_stream_destroy)>

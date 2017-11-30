@@ -46,8 +46,11 @@ struct cubeb_ops {
   char const * (* get_backend_id)(cubeb * context);
   int (* get_max_channel_count)(cubeb * context, uint32_t * max_channels);
   int (* get_min_latency)(cubeb * context,
-                          cubeb_stream_params params,
-                          uint32_t * latency_ms);
+                          cubeb_device_type type,
+                          cubeb_devid inp_id,
+                          cubeb_devid out_id,
+                          cubeb_stream_params * inp_params,
+                          cubeb_stream_params * out_params);
   int (* get_preferred_sample_rate)(cubeb * context, uint32_t * rate);
   int (* get_preferred_channel_layout)(cubeb * context, cubeb_channel_layout * layout);
   int (* enumerate_devices)(cubeb * context, cubeb_device_type type,

@@ -36,7 +36,7 @@ TEST(cubeb, latency)
     max_channels,
     CUBEB_LAYOUT_UNDEFINED
   };
-  r = cubeb_get_min_latency(ctx, &params, &latency_frames);
+  r = cubeb_get_min_latency(ctx, CUBEB_DEVICE_TYPE_OUTPUT, NULL, NULL, NULL, &params);
   ASSERT_TRUE(r == CUBEB_OK || r == CUBEB_ERROR_NOT_SUPPORTED);
   if (r == CUBEB_OK) {
     ASSERT_GT(latency_frames, 0u);

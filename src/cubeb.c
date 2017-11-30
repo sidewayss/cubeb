@@ -245,17 +245,26 @@ cubeb_get_max_channel_count(cubeb * context, uint32_t * max_channels)
 }
 
 int
-cubeb_get_min_latency(cubeb * context, cubeb_stream_params * params, uint32_t * latency_ms)
+cubeb_get_min_latency(cubeb * context,
+                      cubeb_device_type type,
+                      cubeb_devid inp_id,
+                      cubeb_devid out_id,
+                      cubeb_stream_params * inp_params,
+                      cubeb_stream_params * out_params)
 {
-  if (!context || !params || !latency_ms) {
+  if (!context || !type // the device ids can be null == default device
+   || (type & CUBEB_DEVICE_TYPE_INPUT  && !inp_params)
+   || (type & CUBEB_DEVICE_TYPE_OUTPUT && !out_params))
+  {
     return CUBEB_ERROR_INVALID_PARAMETER;
   }
-
+  
   if (!context->ops->get_min_latency) {
     return CUBEB_ERROR_NOT_SUPPORTED;
   }
 
-  return context->ops->get_min_latency(context, *params, latency_ms);
+  return context->ops->get_min_latency(context, type, inp_id,     out_id,
+                                                      inp_params, out_params);
 }
 
 int

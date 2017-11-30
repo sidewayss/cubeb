@@ -54,9 +54,8 @@ TEST(cubeb, overload_callback)
 {
   cubeb * ctx;
   cubeb_stream * stream;
-  cubeb_stream_params output_params;
+  cubeb_stream_params params;
   int r;
-  uint32_t latency_frames = 0;
 
   r = common_init(&ctx, "Cubeb callback overload");
   ASSERT_EQ(r, CUBEB_OK);
@@ -64,17 +63,17 @@ TEST(cubeb, overload_callback)
   std::unique_ptr<cubeb, decltype(&cubeb_destroy)>
     cleanup_cubeb_at_exit(ctx, cubeb_destroy);
 
-  output_params.format = STREAM_FORMAT;
-  output_params.rate = 48000;
-  output_params.channels = 2;
-  output_params.layout = CUBEB_LAYOUT_STEREO;
+  params.format = STREAM_FORMAT;
+  params.rate = 48000;
+  params.channels = 2;
+  params.layout = CUBEB_LAYOUT_STEREO;
 
-  r = cubeb_get_min_latency(ctx, &output_params, &latency_frames);
+  r = cubeb_get_min_latency(ctx, CUBEB_DEVICE_TYPE_OUTPUT, NULL, NULL, NULL, &params);
   ASSERT_EQ(r, CUBEB_OK);
 
   r = cubeb_stream_init(ctx, &stream, "Cubeb",
-                        NULL, NULL, NULL, &output_params,
-                        latency_frames, data_cb, state_cb, NULL);
+                        NULL, NULL, NULL, &params,
+                        NULL, data_cb, state_cb, NULL);
   ASSERT_EQ(r, CUBEB_OK);
 
   std::unique_ptr<cubeb_stream, decltype(&cubeb_stream_destroy)>

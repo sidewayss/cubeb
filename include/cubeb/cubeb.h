@@ -220,6 +220,8 @@ typedef struct {
   uint32_t rate;                /**< Requested sample rate.  Valid range is [1000, 192000]. */
   uint32_t channels;            /**< Requested channel count.  Valid range is [1, 8]. */
   cubeb_channel_layout layout;  /**< Requested channel layout. This must be consistent with the provided channels. */
+  uint32_t frames;              /**< Requested frames per period. */
+  uint32_t valid_bits;          /**< Requested valid bits per sample. */
 } cubeb_stream_params;
 
 /** Audio device description */
@@ -422,16 +424,21 @@ CUBEB_EXPORT int cubeb_get_max_channel_count(cubeb * context, uint32_t * max_cha
     when creating a stream for the specified sample rate. This is platform,
     hardware and backend dependent.
     @param context A pointer to the cubeb context.
-    @param params On some backends, the minimum achievable latency depends on
-                  the characteristics of the stream.
-    @param latency_frames The latency value, in frames, to pass to
-                          cubeb_stream_init.
+    @param type The device type, input, output, or both (duplex).
+    @param inp_id The input device id, or NULL.
+    @param out_id The output device id, or NULL.
+    @param inp_params Input parameters. On some backends, the minimum achievable
+                      latency depends on the characteristics of the stream.
+    @param out_params Output parameters.
     @retval CUBEB_OK
     @retval CUBEB_ERROR_INVALID_PARAMETER
     @retval CUBEB_ERROR_NOT_SUPPORTED */
 CUBEB_EXPORT int cubeb_get_min_latency(cubeb * context,
-                                       cubeb_stream_params * params,
-                                       uint32_t * latency_frames);
+                                       cubeb_device_type type,
+                                       cubeb_devid inp_id,
+                                       cubeb_devid out_id,
+                                       cubeb_stream_params * inp_params,
+                                       cubeb_stream_params * out_params);
 
 /** Get the preferred sample rate for this backend: this is hardware and
     platform dependent, and can avoid resampling, and/or trigger fastpaths.

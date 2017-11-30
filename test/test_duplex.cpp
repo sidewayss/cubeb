@@ -42,7 +42,7 @@ long data_cb_duplex(cubeb_stream * stream, void * user, const void * inputbuffer
   // checking if there is noise in the process.
   long output_index = 0;
   for (long i = 0; i < nframes; i++) {
-    if (ib[i] <= -1.0 && ib[i] >= 1.0) {
+    if (ib[i] <= -1.0 || ib[i] >= 1.0) {
       seen_audio = 0;
       break;
     }
@@ -82,7 +82,6 @@ TEST(cubeb, duplex)
   cubeb_stream_params output_params;
   int r;
   user_state_duplex stream_state;
-  uint32_t latency_frames = 0;
 
   r = common_init(&ctx, "Cubeb duplex example");
   ASSERT_EQ(r, CUBEB_OK) << "Error initializing cubeb library";
@@ -106,12 +105,13 @@ TEST(cubeb, duplex)
   output_params.channels = 2;
   output_params.layout = CUBEB_LAYOUT_STEREO;
 
-  r = cubeb_get_min_latency(ctx, &output_params, &latency_frames);
+  r = cubeb_get_min_latency(ctx, (cubeb_device_type)(CUBEB_DEVICE_TYPE_INPUT | CUBEB_DEVICE_TYPE_OUTPUT),
+                            NULL, NULL, &input_params, &output_params);
   ASSERT_EQ(r, CUBEB_OK) << "Could not get minimal latency";
 
   r = cubeb_stream_init(ctx, &stream, "Cubeb duplex",
                         NULL, &input_params, NULL, &output_params,
-                        latency_frames, data_cb_duplex, state_cb_duplex, &stream_state);
+                        NULL, data_cb_duplex, state_cb_duplex, &stream_state);
   ASSERT_EQ(r, CUBEB_OK) << "Error initializing cubeb stream";
 
   std::unique_ptr<cubeb_stream, decltype(&cubeb_stream_destroy)>
