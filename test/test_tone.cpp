@@ -70,7 +70,7 @@ long data_cb_duplex(cubeb_stream * stream, void * user, const void * inputbuffer
         max = abs(ib[i]);
       if (max > 0.1 && !u->is_max) {
         QueryPerformanceCounter(&now);
-        ALOGV("elapsed:%.2fms\r\n", 1000.0 * (now.QuadPart - u->tone_start) / u->frequency);
+        ALOGV("elapsed:%.2f", 1000.0 * (now.QuadPart - u->tone_start) / u->frequency);
         u->is_max = true;
       }
       if (remainder > 0.150 && remainder < 0.160) {
@@ -78,20 +78,18 @@ long data_cb_duplex(cubeb_stream * stream, void * user, const void * inputbuffer
           u->is_tone = true;
           u->is_max  = false;
           u->tone_start = current_time;
-//          ALOGV("start:%8.2fms ", 1000.0 * (current_time - u->start_time) / u->frequency);
         }
         t1 = sin(2 * M_PI*(i + u->position) * 350 / SAMPLE_FREQUENCY);
         t2 = sin(2 * M_PI*(i + u->position) * 440 / SAMPLE_FREQUENCY);
-        ob[output_index] = ob[output_index + 1] = (((SHRT_MAX / 2) * t1) + ((SHRT_MAX / 2) * t2)) / 32767;
-        output_index += 2;
+        ob[output_index] /*= ob[output_index + 1]*/ = (((SHRT_MAX / 2) * t1) + ((SHRT_MAX / 2) * t2)) / 32767;
+        output_index++; // += 2;
       }
       else {
         if (u->is_tone) {
           u->is_tone = false;
-//          ALOGV("end:%8.2fms ", 1000.0 * (current_time - u->start_time) / u->frequency);
         }
-        ob[output_index] = ob[output_index + 1] = 0; // ib[i];
-        output_index += 2;
+        ob[output_index] /*= ob[output_index + 1]*/ = 0; // ib[i];
+        output_index++; // += 2;
       }
     }
   }
@@ -99,7 +97,6 @@ long data_cb_duplex(cubeb_stream * stream, void * user, const void * inputbuffer
   u->position += nframes;
   u->seen_audio |= seen_audio;
 
-//  fprintf(stdout, " data_cb:%.2f ", max);
   return nframes;
 }
 
@@ -149,10 +146,10 @@ TEST(cubeb, duplex)
   /* minimal latency user-case: input and output params identical. */
   inp_params.format     = STREAM_FORMAT;
   out_params.format     = STREAM_FORMAT;
-  inp_params.layout     = CUBEB_LAYOUT_STEREO;
-  out_params.layout     = CUBEB_LAYOUT_STEREO;
-  inp_params.channels   = 2;
-  out_params.channels   = 2;
+  inp_params.layout     = CUBEB_LAYOUT_MONO;
+  out_params.layout     = CUBEB_LAYOUT_MONO;
+  inp_params.channels   = 1;
+  out_params.channels   = 1;
   inp_params.rate       = 48000;
   out_params.rate       = 48000;
 

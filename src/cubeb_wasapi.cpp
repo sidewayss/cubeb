@@ -1894,13 +1894,13 @@ int setup_wasapi_stream_one_side(cubeb_stream * stm,
     return CUBEB_ERROR;
   }
 
-  mix_params->rate      = mix_format.get()->nSamplesPerSec;
-  mix_params->channels  = mix_format.get()->nChannels;
+  mix_params->rate      = mix_format->nSamplesPerSec;
+  mix_params->channels  = mix_format->nChannels;
   mix_params->format    = stream_params->format;
   mix_params->layout    = mask_to_channel_layout(mix_format.get());
   if (mix_params->layout == CUBEB_LAYOUT_UNDEFINED) {
     LOG("Output using undefined layout!\n");
-  } else if (mix_format.get()->nChannels != CUBEB_CHANNEL_LAYOUT_MAPS[mix_params->layout].channels) {
+  } else if (mix_format->nChannels != CUBEB_CHANNEL_LAYOUT_MAPS[mix_params->layout].channels) {
     // The CUBEB_CHANNEL_LAYOUT_MAPS[mix_params->layout].channels may be
     // different from the mix_params->channels. 6 channel ouput with stereo
     // layout is acceptable in Windows. If this happens, it should not downmix
@@ -1996,19 +1996,19 @@ int setup_wasapi_stream(cubeb_stream * stm)
                                       stm->capture_client,
                                       &stm->input_mix_params);
 
-    // We initializing an input stream, buffer ahead two buffers worth of silence.
-    // This delays the input side slightly, but allow to not glitch when no input
-    // is available when calling into the resampler to call the callback: the input
-    // refill event will be set shortly after to compensate for this lack of data.
-    // In debug, four buffers are used, to avoid tripping up assertions down the line.
-//#if !defined(DEBUG)
-//    const int silent_buffer_count = 1;
-//#else
-//    const int silent_buffer_count = 1;
-//#endif
-//    stm->linear_input_buffer->push_silence(stm->input_buffer_frame_count *
-//      stm->input_stream_params.channels *
-//      silent_buffer_count);
+//!!!!    // We initializing an input stream, buffer ahead two buffers worth of silence.
+//!!!!    // This delays the input side slightly, but allow to not glitch when no input
+//!!!!    // is available when calling into the resampler to call the callback: the input
+//!!!!    // refill event will be set shortly after to compensate for this lack of data.
+//!!!!    // In debug, four buffers are used, to avoid tripping up assertions down the line.
+//!!!!#if !defined(DEBUG)
+//!!!!    const int silent_buffer_count = 2;
+//!!!!#else
+//!!!!    const int silent_buffer_count = 4;
+//!!!!#endif
+//!!!!    stm->linear_input_buffer->push_silence(stm->input_buffer_frame_count *
+//!!!!      stm->input_stream_params.channels *
+//!!!!      silent_buffer_count);
 
     if (rv != CUBEB_OK) {
       LOG("Failure to open the input side.");
