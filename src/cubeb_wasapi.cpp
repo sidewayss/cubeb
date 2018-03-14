@@ -1709,16 +1709,18 @@ wasapi_get_min_latency(cubeb *               ctx,
    && min_in != def_in && min_out != def_out)
   {
     if (!(min_in == min_out && inp_params->rate == out_params->rate)) {
-      float min_time_in  = min_in  / inp_params->rate;
-      float min_time_out = min_out / out_params->rate;
-      if (min_time_in == min_time_out) { //-comparing floats should be OK here-
+      float min_time_in  = 1.0 * min_in  / inp_params->rate;
+      float min_time_out = 1.0 * min_out / out_params->rate;
+      if (min_time_in != min_time_out) { //-comparing floats should be OK here-
         // Not aligned: we must align duration, not frames, so it won't
         // always be a perfect alignment. This seeks the lowest latency
         // along with the fewest excess events fired.
         if (min_time_in > min_time_out) {
-          min_out = fun_out * floor(min_time_in  / fun_out / out_params->rate);
+          if (!(min_in % fun_out))
+            min_out = min_in;
         } else {
-          min_in  = fun_in  * floor(min_time_out / fun_in  / inp_params->rate);
+          if (!(min_out % fun_in))
+            min_in = min_out;
         }
         inp_params->frames = min_in;
         out_params->frames = min_out;
