@@ -150,8 +150,8 @@ TEST(cubeb, duplex)
   out_params.layout     = CUBEB_LAYOUT_MONO;
   inp_params.channels   = 1;
   out_params.channels   = 1;
-  inp_params.rate       = 48000;
-  out_params.rate       = 48000;
+  inp_params.rate       = 44100;
+  out_params.rate       = 44100;
 
   dev_type = (cubeb_device_type)(CUBEB_DEVICE_TYPE_INPUT | CUBEB_DEVICE_TYPE_OUTPUT);
   r = cubeb_get_min_latency(ctx, dev_type, NULL, NULL, &inp_params, &out_params);

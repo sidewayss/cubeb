@@ -1248,29 +1248,19 @@ HRESULT get_endpoint(com_ptr<IMMDevice> &         device,
   WAVEFORMATEXTENSIBLE * format_pcm = nullptr;
   bool is_dirty = false;
   if (mix_format->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
-    DWORD channel_mask = channel_layout_to_mask(params->layout);
     GUID  sub_format   = (params->format == CUBEB_SAMPLE_S16NE
                           ? KSDATAFORMAT_SUBTYPE_PCM
                           : KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
-
     format_pcm = reinterpret_cast<WAVEFORMATEXTENSIBLE *>(mix_format.get());
-    if (format_pcm->SubFormat     != sub_format
-     || format_pcm->dwChannelMask != channel_mask)
-    {
+    if (format_pcm->SubFormat != sub_format) {
       is_dirty = true;
-      format_pcm->SubFormat     = sub_format;
-      format_pcm->dwChannelMask = channel_mask;
+      format_pcm->SubFormat = sub_format;
     }
   }
 
   // The rest of the members, including the derived ones
-  if (mix_format->nSamplesPerSec != params->rate
-   || mix_format->nChannels      != params->channels
-   || mix_format->wBitsPerSample != bits)
-  {
+  if (mix_format->wBitsPerSample != bits) {
     is_dirty = true;
-    mix_format->nSamplesPerSec = params->rate;
-    mix_format->nChannels      = params->channels;
     mix_format->wBitsPerSample = bits;
     waveformatex_update_derived_properties(mix_format.get());
   }
@@ -1616,7 +1606,8 @@ get_latency_one_side(cubeb *               ctx,    // [in]
                      EDataFlow             direction,
                      cubeb_stream_params * params, // params->frames == [out]
                      uint32_t *            fun,    // [out]
-                     uint32_t *            def )
+                     uint32_t *            def,
+                     uint32_t *            mix_rate)
 {
   if (!params || (params->format != CUBEB_SAMPLE_FLOAT32NE
                && params->format != CUBEB_SAMPLE_S16NE)) {
@@ -1635,6 +1626,8 @@ get_latency_one_side(cubeb *               ctx,    // [in]
     LOG("Could not get %s input endpoint, error: %lx\n", dev_id, hr);
     return CUBEB_ERROR;
   }
+
+  *mix_rate = mix_format->nSamplesPerSec;
 
   if (ctx->is_client3) { // Windows 10 and later
     IAudioClient3* iac3;
@@ -1671,6 +1664,42 @@ get_latency_one_side(cubeb *               ctx,    // [in]
   return S_OK;
 }
 
+static void 
+set_min_latency (
+                 uint32_t              min_hi,
+                 uint32_t              min_lo,
+                 uint32_t              fun_hi,
+                 uint32_t              fun_lo,
+                 uint32_t              rate_hi,
+                 uint32_t              rate_lo,
+                 float                 time_hi,
+                 float                 time_lo,
+                 cubeb_stream_params * hi_params,
+                 cubeb_stream_params * lo_params)
+{
+  uint32_t mod;
+  if (rate_hi == rate_lo) {
+    mod = min_hi % fun_lo;
+    if (!mod)
+      min_lo = min_hi;
+    else if (!(fun_hi % fun_lo))
+      min_lo = min_hi;
+    else if (!(fun_lo % fun_hi)) {
+      min_hi += (fun_lo - mod);
+      min_lo = min_hi;
+    }
+    else // closest match at lowest latency
+      min_lo = fun_lo * std::floor(min_hi / fun_lo);
+  }
+  else { // different sample rates: again, closest match at lowest latency
+    min_lo = std::floor(std::floor(time_hi / time_lo * min_lo)
+      / fun_lo)
+      * fun_lo;
+  }
+  hi_params->frames = min_hi;
+  lo_params->frames = min_lo;
+}
+
 int
 wasapi_get_min_latency(cubeb *               ctx,
                        cubeb_device_type     type,
@@ -1686,15 +1715,16 @@ wasapi_get_min_latency(cubeb *               ctx,
   HRESULT hr;
   uint32_t def_in,  fun_in,  min_in;
   uint32_t def_out, fun_out, min_out;
-
+  uint32_t rate_in, rate_out;
+  
   if (type & CUBEB_DEVICE_TYPE_INPUT) { // Input Device
-    hr = get_latency_one_side(ctx, inp_id, eCapture, inp_params, &fun_in, &def_in);
+    hr = get_latency_one_side(ctx, inp_id, eCapture, inp_params, &fun_in, &def_in, &rate_in);
     if (FAILED(hr)) {
       return CUBEB_ERROR;
     }
   }
   if (type & CUBEB_DEVICE_TYPE_OUTPUT) { // Output Device
-    hr = get_latency_one_side(ctx, out_id, eRender, out_params, &fun_out, &def_out);
+    hr = get_latency_one_side(ctx, out_id, eRender, out_params, &fun_out, &def_out, &rate_out);
     if (FAILED(hr)) {
       return CUBEB_ERROR;
     }
@@ -1705,25 +1735,22 @@ wasapi_get_min_latency(cubeb *               ctx,
   // the period values are best left at the default value.
   min_in  = inp_params->frames;
   min_out = out_params->frames;
-  if (type & CUBEB_DEVICE_TYPE_INPUT && type & CUBEB_DEVICE_TYPE_OUTPUT
-   && min_in != def_in && min_out != def_out)
+  if (type & CUBEB_DEVICE_TYPE_INPUT  && min_in  != def_in
+   && type & CUBEB_DEVICE_TYPE_OUTPUT && min_out != def_out)
   {
     if (!(min_in == min_out && inp_params->rate == out_params->rate)) {
-      float min_time_in  = 1.0 * min_in  / inp_params->rate;
-      float min_time_out = 1.0 * min_out / out_params->rate;
+      float min_time_in  = 1.0 * min_in  / rate_in;
+      float min_time_out = 1.0 * min_out / rate_out;
       if (min_time_in != min_time_out) { //-comparing floats should be OK here-
         // Not aligned: we must align duration, not frames, so it won't
         // always be a perfect alignment. This seeks the lowest latency
         // along with the fewest excess events fired.
-        if (min_time_in > min_time_out) {
-          if (!(min_in % fun_out))
-            min_out = min_in;
-        } else {
-          if (!(min_out % fun_in))
-            min_in = min_out;
-        }
-        inp_params->frames = min_in;
-        out_params->frames = min_out;
+        if (min_time_in > min_time_out)
+          set_min_latency(min_in, min_out, fun_in, fun_out, rate_in, rate_out,
+                          min_time_in, min_time_out, inp_params, out_params);
+        else
+          set_min_latency(min_out, min_in, fun_out, fun_in, rate_out, rate_in,
+                          min_time_out, min_time_in, out_params, inp_params);
       }
     }
   }
